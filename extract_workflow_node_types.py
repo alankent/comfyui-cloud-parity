@@ -1,0 +1,148 @@
+"""
+extract_workflow_node_types.py
+
+Scans all oamaster-*.json workflow files in web/workflows/ and extracts every
+unique node class_type / type used. Outputs a sorted list that can be used as
+an allowlist when building new workflows for ComfyUI Cloud.
+
+Also cross-references with D:/comfy-cloud/cloud_nodes.json (produced by
+fetch_cloud_nodes.py / setup.sh) to show which custom node packages are required.
+
+Usage (run from anywhere in the repo):
+    python comfy-cloud-setup/extract_workflow_node_types.py
+    python comfy-cloud-setup/extract_workflow_node_types.py --json
+    python comfy-cloud-setup/extract_workflow_node_types.py --save
+    python comfy-cloud-setup/extract_workflow_node_types.py --check path/to/workflow.json
+"""
+
+import argparse
+import glob
+import json
+import os
+import sys
+from collections import defaultdict
+
+
+WORKFLOW_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'web', 'workflows')
+# cloud_nodes.json is produced by fetch_cloud_nodes.py and lives in the local Comfy Cloud install
+CLOUD_NODES_PATH = r'D:\comfy-cloud\cloud_nodes.json'
+# Allowlist saved alongside the workflow files for easy access by the skill
+OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'web', 'workflows', '.node-allowlist.json')
+
+
+def extract_node_types(workflow_json: dict) -> set[str]:
+    """Return all node type strings from a workflow (graph or API format)."""
+    types: set[str] = set()
+    nodes = workflow_json.get('nodes', [])
+    if isinstance(nodes, dict):
+        nodes = list(nodes.values())
+    for node in nodes:
+        t = node.get('type') or node.get('class_type')
+        if t and not str(t).startswith('Note') and t not in ('MarkdownNote',):
+            types.add(str(t))
+    # Also handle API format (flat dict keyed by string node id)
+    if not nodes and isinstance(workflow_json, dict):
+        for v in workflow_json.values():
+            if isinstance(v, dict) and 'class_type' in v:
+                types.add(v['class_type'])
+    # Handle subgraphs
+    for defn in workflow_json.get('definitions', {}).get('subgraphs', []):
+        for node in defn.get('nodes', []):
+            t = node.get('type') or node.get('class_type')
+            if t:
+                types.add(str(t))
+    return types
+
+
+def load_cloud_packages() -> list[dict]:
+    if os.path.exists(CLOUD_NODES_PATH):
+        with open(CLOUD_NODES_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+        return data.get('nodes', [])
+    return []
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Extract node types from OA workflows')
+    parser.add_argument('--json', action='store_true', help='Output as JSON')
+    parser.add_argument('--check', metavar='FILE', help='Check a single workflow file against the allowlist')
+    parser.add_argument('--save', action='store_true', help='Save allowlist to web/workflows/.node-allowlist.json')
+    args = parser.parse_args()
+
+    # Load all oamaster workflows
+    pattern = os.path.join(WORKFLOW_DIR, 'oamaster-*.json')
+    workflow_files = sorted(glob.glob(pattern))
+
+    if not workflow_files:
+        print(f'ERROR: No oamaster-*.json files found in {WORKFLOW_DIR}', file=sys.stderr)
+        sys.exit(1)
+
+    # Collect node types per workflow file
+    type_to_files: dict[str, list[str]] = defaultdict(list)
+    for path in workflow_files:
+        name = os.path.basename(path)
+        try:
+            with open(path, encoding='utf-8') as f:
+                wf = json.load(f)
+            for t in extract_node_types(wf):
+                type_to_files[t].append(name)
+        except Exception as e:
+            print(f'  WARNING: could not parse {name}: {e}', file=sys.stderr)
+
+    all_types = sorted(type_to_files.keys())
+    cloud_packages = load_cloud_packages()
+    cloud_pkg_names = {p['name'] for p in cloud_packages if p.get('status') == 'matched'}
+
+    if args.check:
+        # Check a single file against the collected allowlist
+        with open(args.check, encoding='utf-8') as f:
+            wf = json.load(f)
+        used = extract_node_types(wf)
+        unknown = sorted(used - set(all_types))
+        known = sorted(used & set(all_types))
+        print(f'\nChecking: {os.path.basename(args.check)}')
+        print(f'  Known node types ({len(known)}): {", ".join(known)}')
+        if unknown:
+            print(f'  UNKNOWN node types ({len(unknown)}) — not in any existing OA workflow:')
+            for t in unknown:
+                print(f'    - {t}')
+        else:
+            print('  All node types are in the vetted allowlist.')
+        return
+
+    if args.json:
+        result = {
+            'total_unique_node_types': len(all_types),
+            'sources_scanned': len(workflow_files),
+            'node_types': {t: type_to_files[t] for t in all_types},
+        }
+        print(json.dumps(result, indent=2))
+        return
+
+    if args.save:
+        data = {
+            '_comment': 'Auto-generated by scripts/extract-workflow-node-types.py — do not edit by hand',
+            'sources_scanned': [os.path.basename(p) for p in workflow_files],
+            'node_types': all_types,
+        }
+        with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        print(f'Saved {len(all_types)} node types to {OUTPUT_PATH}')
+        return
+
+    # Default: human-readable summary
+    print(f'\nNode types across {len(workflow_files)} OA workflows ({len(all_types)} unique)\n')
+    print(f'{"Node type":<55} Used in')
+    print('-' * 80)
+    for t in all_types:
+        files = type_to_files[t]
+        short = [f.replace('oamaster-', '').replace('.json', '') for f in files]
+        print(f'{t:<55} {", ".join(short[:3])}{"…" if len(short) > 3 else ""}')
+
+    if cloud_packages:
+        print(f'\nComfy Cloud custom node packages available: {len(cloud_pkg_names)}')
+        print('(See D:/comfy-cloud/cloud_nodes.json for full list)')
+
+
+if __name__ == '__main__':
+    main()
