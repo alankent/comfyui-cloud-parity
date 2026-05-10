@@ -4,7 +4,7 @@ Install and update a local [ComfyUI](https://github.com/comfyanonymous/ComfyUI) 
 
 ## Stability note
 
-This project uses **unofficial, undocumented Comfy Cloud APIs** to discover which custom nodes and models are currently installed on the cloud. These APIs are not part of any public contract and may change without notice. If the script stops working or produces errors, the most likely cause is an API change — please [open an issue](https://github.com/alankent/comfyui-cloud-parity/issues).
+This project uses **unofficial, undocumented Comfy Cloud APIs** to discover which custom nodes and models are currently installed on the cloud. These APIs are not part of any public contract and may change without notice. If the script stops working or produces errors, the most likely cause is an API change.
 
 ## What it does
 
