@@ -2,9 +2,9 @@
 """
 fetch_cloud_models.py — Query Comfy Cloud for available model files.
 
-Queries /api/models/<folder> for each model type (unet, clip, vae, checkpoints,
-loras) and writes a snapshot to cloud-models.json, consumed by the workflow-audit
-and comfy-cloud-models skills.
+Uses the /api/experiment/models endpoint to discover all model folders, then
+fetches the file list for each folder. Writes a snapshot to cloud-models.json,
+consumed by the workflow-audit and comfy-cloud-models skills.
 
 Usage:
     COMFY_CLOUD_API_KEY=xxx python fetch_cloud_models.py --output cloud-models.json
@@ -16,11 +16,10 @@ import json
 import os
 import sys
 import urllib.request
+import urllib.parse
 from datetime import datetime, timezone
 
 COMFY_CLOUD_BASE = "https://cloud.comfy.org"
-
-MODEL_FOLDERS = ["unet", "clip", "vae", "checkpoints", "loras"]
 
 
 def fetch_json(url: str, headers: dict = None, timeout: int = 60) -> object:
@@ -30,12 +29,26 @@ def fetch_json(url: str, headers: dict = None, timeout: int = 60) -> object:
         return json.load(resp)
 
 
-def fetch_model_list(base: str, folder: str, api_key: str) -> list[str]:
-    url = f"{base}/api/models/{folder}"
+def fetch_folders(base: str, api_key: str) -> list[str]:
+    """Return list of all model folder names from /api/experiment/models."""
+    url = f"{base}/api/experiment/models"
     try:
-        result = fetch_json(url, headers={"X-API-Key": api_key})
-        if isinstance(result, list):
-            return sorted(result)
+        items = fetch_json(url, headers={"Authorization": f"Bearer {api_key}"})
+        return [item["name"] for item in items if isinstance(item, dict) and "name" in item]
+    except Exception as e:
+        print(f"ERROR: Could not fetch model folder list: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def fetch_files_in_folder(base: str, folder: str, api_key: str) -> list[str]:
+    """Return sorted list of filenames in a model folder."""
+    # Folder names may contain slashes (e.g. diffusers/Kolors/unet) —
+    # append them directly as path segments, not URL-encoded.
+    url = f"{base}/api/experiment/models/{folder}"
+    try:
+        items = fetch_json(url, headers={"Authorization": f"Bearer {api_key}"})
+        if isinstance(items, list):
+            return sorted(item["name"] for item in items if isinstance(item, dict) and "name" in item)
         return []
     except Exception as e:
         print(f"    WARNING: Could not fetch {folder}: {e}", file=sys.stderr)
@@ -65,13 +78,20 @@ def main() -> None:
         sys.exit(1)
 
     base = args.cloud_base.rstrip("/")
-    models: dict[str, list[str]] = {}
 
-    for folder in MODEL_FOLDERS:
-        print(f"==> Fetching {folder} ...", file=sys.stderr)
-        files = fetch_model_list(base, folder, args.api_key)
+    print(f"==> Fetching model folder list ...", file=sys.stderr)
+    folders = fetch_folders(base, args.api_key)
+    print(f"    {len(folders)} folders found", file=sys.stderr)
+
+    models: dict[str, list[str]] = {}
+    total = 0
+
+    for folder in folders:
+        files = fetch_files_in_folder(base, folder, args.api_key)
         models[folder] = files
-        print(f"    {len(files)} files", file=sys.stderr)
+        total += len(files)
+        if files:
+            print(f"    {folder}: {len(files)} files", file=sys.stderr)
 
     result = {
         "_comment": "Snapshot of model files available in Comfy Cloud. Do not edit by hand.",
@@ -84,8 +104,7 @@ def main() -> None:
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
 
-    total = sum(len(v) for v in models.values())
-    print(f"\n==> Done. {total} total model files across {len(MODEL_FOLDERS)} folders.", file=sys.stderr)
+    print(f"\n==> Done. {total} total model files across {len(folders)} folders.", file=sys.stderr)
     print(f"    Output written to: {args.output}", file=sys.stderr)
 
 

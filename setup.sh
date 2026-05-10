@@ -194,8 +194,10 @@ echo "    Active Python: $(python --version)  ($(which python))"
 # Step 3: Upgrade pip + install build tools
 # ---------------------------------------------------------------------------
 echo ""
-echo "==> Upgrading pip / setuptools / wheel ..."
-python -m pip install --upgrade pip setuptools wheel
+echo "==> Upgrading pip / wheel ..."
+# setuptools intentionally not upgraded: PyTorch 2.11 requires setuptools<82
+# and upgrading it triggers a noisy (but benign) pip resolver warning.
+python -m pip install --upgrade pip wheel
 
 # ---------------------------------------------------------------------------
 # Step 4: Install PyTorch with CUDA support
