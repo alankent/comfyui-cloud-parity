@@ -2,6 +2,10 @@
 
 Install and update a local [ComfyUI](https://github.com/comfyanonymous/ComfyUI) environment that mirrors the custom nodes available on [Comfy Cloud](https://comfy.icu). Run the same workflows locally that you've developed (or tested) on the cloud, without manually tracking which nodes are installed there.
 
+## Stability note
+
+This project uses **unofficial, undocumented Comfy Cloud APIs** to discover which custom nodes and models are currently installed on the cloud. These APIs are not part of any public contract and may change without notice. If the script stops working or produces errors, the most likely cause is an API change — please [open an issue](https://github.com/alankent/comfyui-cloud-parity/issues).
+
 ## What it does
 
 - **Clean install** — clones ComfyUI, creates a Python venv, installs PyTorch with CUDA support, then installs every custom node currently on Comfy Cloud
